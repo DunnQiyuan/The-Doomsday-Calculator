@@ -1,0 +1,584 @@
+// The Special Calculator
+// Dunn (Qiyuan) Zhang
+// This code will calculate the selected operations of the two inputs, and based on the circumstances, produce either a correct, or false result.
+// For pin mapping, refer to the schematic provided in the project documentation site.
+
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <Keypad.h>
+#include <PololuLedStrip.h>
+
+PololuLedStrip<12> ledStrip;
+#define LED_COUNT 14
+rgb_color colors[LED_COUNT];
+
+/// https://www.allaboutcircuits.com/projects/use-a-keypad-with-your-arduino/
+
+enum { INPUT1,    // first row
+       OPERATOR,  // second row
+       INPUT2,    // third row
+       ENTER,     // perform calcuations (do not alter result here)
+       SOLUTION,  // alter the result, if prompted, and then display on screen
+       VERIFICATION,
+       DUNN,
+       CLEAR } mode = INPUT1;  // "DONE" mark the operation as complete and clear all inputs
+
+LiquidCrystal_I2C bigScreen(0x27, 20, 4);
+LiquidCrystal_I2C smallScreen(0x26, 16, 2);
+
+
+const byte rows = 4;
+const byte cols = 4;
+
+const int yesPin = 11;
+const int noPin = 10;
+
+int operatorState = 0;
+int currOperator = 0;  // 0: None, 1: Add, 2: Subtract, 3: Multiply, 4: Division
+
+// define key map, with assistance from Prof. Robert Zacharias
+
+char keys[rows][cols] = {
+  { '1', '4', '7', '*' },
+  { '2', '5', '8', '0' },
+  { '3', '6', '9', '#' },
+  { 'A', 'B', 'C', 'D' }
+};
+
+byte rowPins[rows] = { 5, 4, 3, 2 };
+byte colPins[cols] = { 9, 8, 7, 6 };
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, rows, cols);
+
+unsigned long timer;
+
+long inputNum1;
+long inputNum2;
+long resultSolution;
+long correctSolution;
+
+
+bool clearState = false;
+bool overflow = false;
+bool falseSolution = true;
+
+int calculations = 0;
+int DEFCON = 6;
+
+bool answer;
+
+// Count Function - provided by ChatGPT
+
+int countDigits(unsigned long num) {
+  if (num == 0) return 1;  // Special case for 0, as log10(0) is undefined
+
+  int count = 0;
+  while (num > 0) {
+    count++;
+    num /= 10;
+  }
+  return count;
+}
+
+// switch digits in a number - provided by ChatGPT
+
+long switchRandomDigits(long num) {
+  String numStr = String(num);  // Convert the number to a string
+  int len = numStr.length();
+  if (len < 2) return num;    // No digits to switch if the number is a single digit
+  int pos1 = random(0, len);  // Random position between 0 and len-1
+  int pos2;
+  do {
+    pos2 = random(0, len);
+  } while (pos1 == pos2);  // Ensure we get two distinct positions
+  // Swap the digits
+  char temp = numStr[pos1];
+  numStr[pos1] = numStr[pos2];
+  numStr[pos2] = temp;
+  return numStr.toInt();  // Convert back to integer
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("End of Setup");
+  bigScreen.init();
+  bigScreen.backlight();
+  bigScreen.home();
+  smallScreen.init();
+  smallScreen.backlight();
+  smallScreen.home();
+
+  pinMode(yesPin, INPUT);
+  pinMode(noPin, INPUT);
+
+  colors[0] = rgb_color(0, 0, 0);
+  colors[1] = rgb_color(0, 0, 0);
+  colors[2] = rgb_color(0, 0, 0);
+  colors[3] = rgb_color(0, 0, 0);
+  colors[4] = rgb_color(0, 0, 0);
+  colors[5] = rgb_color(0, 0, 0);
+  colors[6] = rgb_color(0, 0, 0);
+  colors[7] = rgb_color(0, 0, 0);
+  colors[8] = rgb_color(0, 0, 0);
+  colors[9] = rgb_color(0, 0, 0);
+  colors[10] = rgb_color(0, 0, 0);
+  colors[11] = rgb_color(0, 0, 0);
+  ledStrip.write(colors, LED_COUNT);
+}
+
+void loop() {
+
+  // Serial.println(DEFCON);
+
+  // delay(10);
+
+  bool floatSolution = false;
+
+  switch (mode) {
+    case INPUT1:
+      { 
+        // Metal Jeypad
+        char key1 = keypad.getKey();
+        if (key1) {
+          if (isdigit(key1)) {
+            long digit = key1 - '0';
+            if (inputNum1 <= (2147483647 - digit) / 10) {  // max of long
+              inputNum1 = inputNum1 * 10 + digit;
+              bigScreen.setCursor(0, 0);
+              bigScreen.print(inputNum1);
+            }
+          } else {
+            if (inputNum1 != 0) {
+              if (key1 == 'A') {
+                currOperator = 1;
+              }
+              if (key1 == 'B') {
+                currOperator = 2;
+              }
+              if (key1 == 'C') {
+                currOperator = 3;
+              }
+              if (key1 == 'D') {
+                currOperator = 4;
+              }
+              mode = OPERATOR;
+            }
+          }
+          // 1x4 Key strip (operators)
+          // for (int x = 0; x < 4; x++) {
+          //   operatorState = digitalRead(operatorPins[x]);
+
+          // if (key1 and not isdigit(key1)) {
+          //   if (key1 == 'A') {
+          //     currOperator = 1;
+          //   }
+          //   if (key1 == 'B') {
+          //     currOperator = 2;
+          //   }
+          //   if (key1 == 'C') {
+          //     currOperator = 3;
+          //   }
+          //   if (key1 == 'D') {
+          //     currOperator = 4;
+          //   }
+          //   // Serial.println(currOperator);
+          // }
+          // if (currOperator != 0 and inputNum1 != 0) {
+          //   mode = OPERATOR;
+          // }
+          // if (key1 == '#') {
+          //   inputNum1 = 0;
+          //   bigScreen.clear();
+          // }
+        } if (key1 == '#') {
+          mode = CLEAR;
+        }
+        break;
+      }
+    case OPERATOR:
+      {
+        // char operations = keypad.getKey();
+        // if (operations and not isdigit(operations)) {
+        bigScreen.setCursor(0, 1);
+        if (currOperator == 1) {
+          // currOperator = 1;
+          // Serial.println("+");
+          bigScreen.print("+");
+        }
+        if (currOperator == 2) {
+          // currOperator = 2;
+          // Serial.println("-");
+          bigScreen.print("-");
+        }
+        if (currOperator == 3) {
+          // currOperator = 3;
+          // Serial.println("x");
+          bigScreen.print("x");
+        }
+        if (currOperator == 4) {
+          // currOperator = 4;
+          // Serial.println("÷");
+          bigScreen.print(char(0xfd));
+        }
+
+
+        // if (operations and isDigit(operations)) {
+        //   if (currOperator != 0) {
+        mode = INPUT2;
+        // inputNum2 = operations - '0';
+        // bigScreen.setCursor(0, 2);
+        // bigScreen.print(inputNum2);
+        // }
+        // }
+
+        break;
+      }
+    case INPUT2:
+      {
+        // Metal Jeypad
+        char key3 = keypad.getKey();
+        if (key3 and isdigit(key3)) {
+          clearState = false;
+          long digit = key3 - '0';
+          if (inputNum2 <= (2147483647 - digit) / 10) {  // max of long
+            inputNum2 = inputNum2 * 10 + digit;
+            bigScreen.setCursor(0, 2);
+            bigScreen.print(inputNum2);
+          }
+        }
+        if (key3 == '*') {
+          mode = ENTER;
+        }
+        if (key3 == '#') {
+          mode = CLEAR;
+        }
+        // clear funtion
+        if (key3 == '#' and clearState == false) {
+          bigScreen.clear();
+          inputNum2 = 0;
+          bigScreen.setCursor(0, 0);
+          bigScreen.print(inputNum1);
+
+          bigScreen.setCursor(0, 1);
+          if (currOperator == 1) {
+            bigScreen.print("+");
+          }
+          if (currOperator == 2) {
+            bigScreen.print("-");
+          }
+          if (currOperator == 3) {
+            bigScreen.print("x");
+          }
+          if (currOperator == 4) {
+            bigScreen.print(char(0xfd));
+          }
+          bigScreen.setCursor(0, 2);
+          bigScreen.print(inputNum2);
+
+          clearState = true;
+        }
+        // key3 = keypad.getKey();
+        // if (key3 == '#' and clearState == true) {
+        //   inputNum1 = 0;
+        //   currOperator = 0;
+        //   inputNum2 = 0;
+        //   mode = INPUT1;
+        //   bigScreen.clear();
+        //   clearState = false;
+        // }
+        break;
+      }
+    case ENTER:
+      {
+        calculations += 1;
+        bool solutionGenerated = false;
+        if (currOperator == 1) {
+          resultSolution = inputNum1 + inputNum2;
+          correctSolution = resultSolution;
+          solutionGenerated = true;
+        }
+        if (currOperator == 2) {
+          resultSolution = inputNum1 - inputNum2;
+          correctSolution = resultSolution;
+          solutionGenerated = true;
+        }
+        if (currOperator == 3) {
+          resultSolution = inputNum1 * inputNum2;
+          correctSolution = resultSolution;
+          if (inputNum1 != 0 and resultSolution / inputNum1 != inputNum2) {
+            overflow = true;
+          }
+          solutionGenerated = true;
+        }
+        if (currOperator == 4) {
+          resultSolution = inputNum1 / inputNum2;
+          correctSolution = resultSolution;
+          solutionGenerated = true;
+        }
+        if (solutionGenerated) {
+          mode = SOLUTION;
+        }
+        break;
+      }
+    case SOLUTION:  // alter solution
+      {
+        int count = countDigits(resultSolution);
+        if ((calculations % 10 == 0) or ((millis() / 1000) % 5 == 0)) {  // alter answer
+          Serial.println("False Answer");
+          // setup manipulation cases
+          int alterCase = random(1, 4);
+          Serial.println((String) "altered case:" + alterCase);
+          switch (alterCase) {
+            case 1:
+              Serial.println((String) "1 unaltered solution:" + resultSolution);
+              resultSolution += random(1, 11);
+              break;
+            case 2:
+              Serial.println((String) "2 unaltered solution:" + resultSolution);
+              resultSolution -= random(1, 11);
+              break;
+            case 3:
+              Serial.println((String) "3 unaltered solution:" + resultSolution);
+              resultSolution = switchRandomDigits(resultSolution);
+              break;
+          }
+          count = countDigits(resultSolution);
+        }
+        if (overflow == false) {
+          int startLocation = 20 - count;
+          bigScreen.setCursor(startLocation, 3);
+          bigScreen.print(resultSolution);
+          bigScreen.setCursor(0, 3);
+          bigScreen.print("=");
+        } else {
+          bigScreen.clear();
+          smallScreen.clear();
+          bigScreen.setCursor(0,0 );
+          bigScreen.print("TRY AGAIN");
+          bigScreen.setCursor(0, 1);
+          bigScreen.print("Output TOO BIG.....");
+          bigScreen.setCursor(0, 2);
+          bigScreen.print("EXCEEDS MAX OF LONG");
+          delay(5000);
+          inputNum1 = 0;
+          inputNum2 = 0;
+          currOperator = 0;
+          overflow = false;
+          bigScreen.clear();
+          smallScreen.clear();
+          mode = INPUT1;
+          break;
+        }
+        // Serial.println((String) "calculations:" + calculations);
+        Serial.println((String) "Current Calculation: " + calculations);
+        Serial.println((String) "Current Time: " + millis());
+        mode = VERIFICATION;
+        break;
+      }
+    case VERIFICATION:
+      {
+
+        smallScreen.setCursor(0, 0);
+        smallScreen.print("Is It Correct?");
+        smallScreen.setCursor(0, 1);
+        smallScreen.print("YES");
+        smallScreen.setCursor(14, 1);
+        smallScreen.print("NO");
+
+        if (resultSolution != correctSolution) {  // if the produced result is wrong
+
+          if (digitalRead(yesPin)) {
+            DEFCON -= 1;
+            answer = false;
+            // Serial.println(DEFCON);
+            mode = DUNN;
+            break;
+          }
+          if (digitalRead(noPin)) {
+            mode = DUNN;
+            answer = true;
+          }
+        } else {  // if the produced result is correct
+
+          if (digitalRead(noPin)) {
+            DEFCON -= 1;
+            answer = false;
+            // Serial.println(DEFCON);
+            mode = DUNN;
+            break;
+          }
+          if (digitalRead(yesPin)) {
+            mode = DUNN;
+            answer = true;
+          }
+        }
+
+        break;
+      }
+    case DUNN:
+      {
+        {
+          Serial.println(DEFCON);
+          mode = INPUT1;
+          inputNum1 = 0;
+          inputNum2 = 0;
+          currOperator = 0;
+          overflow = false;
+          bigScreen.clear();
+          smallScreen.clear();
+          if (answer == false) {
+            if (DEFCON == 5) {
+              colors[0] = rgb_color(0, 0, 255);
+              colors[1] = rgb_color(0, 0, 255);
+              colors[2] = rgb_color(0, 0, 0);
+              colors[3] = rgb_color(0, 0, 0);
+              colors[4] = rgb_color(0, 0, 0);
+              colors[5] = rgb_color(0, 0, 0);
+              colors[6] = rgb_color(0, 0, 0);
+              colors[7] = rgb_color(0, 0, 0);
+              colors[8] = rgb_color(0, 0, 0);
+              colors[9] = rgb_color(0, 0, 0);
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("WIFI CUTS OUT");
+              delay(5000);
+              bigScreen.clear();
+            }
+            if (DEFCON == 4) {
+              colors[0] = rgb_color(0, 0, 0);
+              colors[1] = rgb_color(0, 0, 0);
+              colors[2] = rgb_color(0, 255, 0);
+              colors[3] = rgb_color(0, 255, 0);
+              colors[4] = rgb_color(0, 255, 0);
+              colors[5] = rgb_color(0, 0, 0);
+              colors[6] = rgb_color(0, 0, 0);
+              colors[7] = rgb_color(0, 0, 0);
+              colors[8] = rgb_color(0, 0, 0);
+              colors[9] = rgb_color(0, 0, 0);
+              colors[10] = rgb_color(0, 0, 0);
+              colors[11] = rgb_color(0, 0, 0);
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("GPS STOPS WORKING");
+              delay(5000);
+              bigScreen.clear();
+            }
+            if (DEFCON == 3) {
+              colors[0] = rgb_color(0, 0, 0);
+              colors[1] = rgb_color(0, 0, 0);
+              colors[2] = rgb_color(0, 0, 0);
+              colors[3] = rgb_color(0, 0, 0);
+              colors[4] = rgb_color(0, 0, 0);
+              colors[5] = rgb_color(255, 255, 0);
+              colors[6] = rgb_color(255, 255, 0);
+              colors[7] = rgb_color(0, 0, 0);
+              colors[8] = rgb_color(0, 0, 0);
+              colors[9] = rgb_color(0, 0, 0);
+              colors[10] = rgb_color(0, 0, 0);
+              colors[11] = rgb_color(0, 0, 0);
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("BANKING SYSTEM");
+              bigScreen.setCursor(0, 1);
+              bigScreen.print("COLLAPSE");
+              delay(5000);
+              bigScreen.clear();
+            }
+            if (DEFCON == 2) {
+              colors[0] = rgb_color(0, 0, 0);
+              colors[1] = rgb_color(0, 0, 0);
+              colors[2] = rgb_color(0, 0, 0);
+              colors[3] = rgb_color(0, 0, 0);
+              colors[4] = rgb_color(0, 0, 0);
+              colors[5] = rgb_color(0, 0, 0);
+              colors[6] = rgb_color(0, 0, 0);
+              colors[7] = rgb_color(255, 128, 0);
+              colors[8] = rgb_color(255, 128, 0);
+              colors[9] = rgb_color(0, 0, 0);
+              colors[10] = rgb_color(0, 0, 0);
+              colors[11] = rgb_color(0, 0, 0);
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("GLOBAL TENSION");
+              bigScreen.setCursor(0, 1);
+              bigScreen.print("HIGHEST");
+              bigScreen.setCursor(0, 2);
+              bigScreen.print("SINCE CUBA");
+              delay(5000);
+              bigScreen.clear();
+            }
+            if (DEFCON == 1) {
+              colors[0] = rgb_color(0, 0, 0);
+              colors[1] = rgb_color(0, 0, 0);
+              colors[2] = rgb_color(0, 0, 0);
+              colors[3] = rgb_color(0, 0, 0);
+              colors[4] = rgb_color(0, 0, 0);
+              colors[5] = rgb_color(0, 0, 0);
+              colors[6] = rgb_color(0, 0, 0);
+              colors[7] = rgb_color(0, 0, 0);
+              colors[8] = rgb_color(0, 0, 0);
+              colors[9] = rgb_color(255, 0, 0);
+              colors[10] = rgb_color(255, 0, 0);
+              colors[11] = rgb_color(255, 0, 0);
+
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("REGIONAL WARS");
+              bigScreen.setCursor(0, 1);
+              bigScreen.print("BREAK OUT");
+              delay(5000);
+              bigScreen.clear();
+            }
+            if (DEFCON == 0) {
+              colors[0] = rgb_color(255, 0, 0);
+              colors[1] = rgb_color(255, 0, 0);
+              colors[2] = rgb_color(255, 0, 0);
+              colors[3] = rgb_color(255, 0, 0);
+              colors[4] = rgb_color(255, 0, 0);
+              colors[5] = rgb_color(255, 0, 0);
+              colors[6] = rgb_color(255, 0, 0);
+              colors[7] = rgb_color(255, 0, 0);
+              colors[8] = rgb_color(255, 0, 0);
+              colors[9] = rgb_color(255, 0, 0);
+              colors[10] = rgb_color(255, 0, 0);
+              colors[11] = rgb_color(255, 0, 0);
+              ledStrip.write(colors, LED_COUNT);
+              bigScreen.setCursor(0, 0);
+              bigScreen.print("ACCIDENTAL NUCLEAR");
+              bigScreen.setCursor(0, 1);
+              bigScreen.print("LAUNCH FROM NORAD");
+              bigScreen.setCursor(0, 3);
+              bigScreen.print("WWIII");
+              delay(5000);
+              DEFCON = 6;  // reset color here
+              colors[0] = rgb_color(0, 0, 0);
+              colors[1] = rgb_color(0, 0, 0);
+              colors[2] = rgb_color(0, 0, 0);
+              colors[3] = rgb_color(0, 0, 0);
+              colors[4] = rgb_color(0, 0, 0);
+              colors[5] = rgb_color(0, 0, 0);
+              colors[6] = rgb_color(0, 0, 0);
+              colors[7] = rgb_color(0, 0, 0);
+              colors[8] = rgb_color(0, 0, 0);
+              colors[9] = rgb_color(0, 0, 0);
+              colors[10] = rgb_color(0, 0, 0);
+              colors[11] = rgb_color(0, 0, 0);
+              mode = INPUT1;
+              inputNum1 = 0;
+              inputNum2 = 0;
+              currOperator = 0;
+              overflow = false;
+              bigScreen.clear();
+              smallScreen.clear();
+            }
+          }
+        }
+        ledStrip.write(colors, LED_COUNT);
+
+        break;
+      }
+    case CLEAR:
+      {
+        inputNum1 = 0;
+        inputNum2 = 0;
+        currOperator = 0;
+        bigScreen.clear();
+        smallScreen.clear();
+        mode = INPUT1;
+      }
+  }
+}
